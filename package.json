@@ -1,0 +1,35 @@
+{
+    "name": "terraform-aws-s3",
+    "version": "0.0.0",
+    "description": "Terraform module for creating and managing Snowflake warehouses with Semantic Release support.",
+    "license": "MIT",
+    "scripts": {
+        "release": "semantic-release"
+    },
+    "devDependencies": {
+        "@semantic-release/changelog": "^6.0.1",
+        "@semantic-release/commit-analyzer": "^13.0.1",
+        "@semantic-release/git": "^10.0.1",
+        "@semantic-release/github": "^12.0.6",
+        "@semantic-release/release-notes-generator": "^14.1.0",
+        "conventional-changelog-conventionalcommits": "^9.3.1",
+        "semantic-release": "^25.0.3"
+    },
+    "directories": {
+        "example": "examples"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/subhamay-bhattacharyya-tf/terraform-aws-s3.git"
+    },
+    "keywords": [
+        "terraform",
+        "snowflake",
+        "warehouse",
+        "infrastructure-as-code"
+    ],
+    "bugs": {
+        "url": "https://github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/issues"
+    },
+    "homepage": "https://github.com/subhamay-bhattacharyya-tf/terraform-aws-s3#readme"
+}

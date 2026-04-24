@@ -1,0 +1,255 @@
+name: Terraform CI
+run-name: CI run by ${{ github.actor }} on ${{ github.ref_name }}
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'feature/**'
+      - 'bug/**'
+    paths:
+      - modules/**
+  pull_request:
+    branches: [main]
+    paths:
+      - modules/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  # ============================================================================
+  # Terraform Validate
+  # ============================================================================
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    env:
+      TF_VERSION: ${{ vars.TERRAFORM_VERSION || '1.3.0' }}
+    strategy:
+      matrix:
+        module:
+          - modules/bucket
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: ${{ matrix.module }}
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+        working-directory: ${{ matrix.module }}
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ matrix.module }}
+
+  # ============================================================================
+  # Validate Examples
+  # ============================================================================
+  examples-validate:
+    name: Validate Examples
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    env:
+      TF_VERSION: ${{ vars.TERRAFORM_VERSION || '1.3.0' }}
+    strategy:
+      matrix:
+        example:
+          - examples/bucket/basic
+          - examples/bucket/versioning
+          - examples/bucket/sse-s3
+          - examples/bucket/sse-kms
+          - examples/bucket/folders
+          - examples/event-notification/sqs
+          - examples/event-notification/sns
+          - examples/event-notification/lambda
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+        working-directory: ${{ matrix.example }}
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ matrix.example }}
+
+  # ============================================================================
+  # Terratest Integration Tests
+  # ============================================================================
+  terratest:
+    name: Terratest
+    runs-on: ubuntu-latest
+    needs: examples-validate
+    env:
+      TF_VERSION: ${{ vars.TERRAFORM_VERSION || '1.3.0' }}
+      GO_VERSION: ${{ vars.GO_VERSION || '1.21' }}
+      AWS_REGION: us-east-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: test/go.sum
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download Go Dependencies
+        run: |
+          go mod tidy
+          go mod download
+        working-directory: test
+
+      - name: Run Terratest - S3 Bucket Basic
+        id: s3-bucket-basic-test
+        run: |
+          set -o pipefail
+          go test -v -timeout 30m -run TestS3BucketBasic ./s3_bucket_basic_test.go ./helpers_test.go 2>&1 | tee test_output.txt
+          echo "## S3 Bucket Basic Test Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat test_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        working-directory: test
+
+      - name: Run Terratest - S3 Bucket Versioning
+        id: s3-bucket-versioning-test
+        run: |
+          set -o pipefail
+          go test -v -timeout 30m -run TestS3BucketVersioning ./s3_bucket_versioning_test.go ./helpers_test.go 2>&1 | tee test_output.txt
+          echo "## S3 Bucket Versioning Test Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat test_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        working-directory: test
+
+      - name: Run Terratest - S3 Bucket SSE-S3
+        id: s3-bucket-sse-s3-test
+        run: |
+          set -o pipefail
+          go test -v -timeout 30m -run TestS3BucketSSES3 ./s3_bucket_sse_s3_test.go ./helpers_test.go 2>&1 | tee test_output.txt
+          echo "## S3 Bucket SSE-S3 Test Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat test_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        working-directory: test
+
+      - name: Run Terratest - S3 Bucket SSE-KMS
+        id: s3-bucket-sse-kms-test
+        run: |
+          set -o pipefail
+          go test -v -timeout 30m -run TestS3BucketSSEKMS ./s3_bucket_sse_kms_test.go ./helpers_test.go 2>&1 | tee test_output.txt
+          echo "## S3 Bucket SSE-KMS Test Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat test_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        working-directory: test
+
+      - name: Run Terratest - S3 Bucket With Folders
+        id: s3-bucket-folders-test
+        run: |
+          set -o pipefail
+          go test -v -timeout 30m -run TestS3BucketWithFolders ./s3_bucket_folders_test.go ./helpers_test.go 2>&1 | tee test_output.txt
+          echo "## S3 Bucket With Folders Test Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat test_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        working-directory: test
+
+  # ============================================================================
+  # Generate Change Log
+  # ============================================================================
+
+  generate-changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    needs: examples-validate
+    if: github.ref != 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: --verbose
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Commit changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --staged --quiet || git commit -m "docs: update CHANGELOG.md [skip ci]"
+          git pull --rebase
+          git push
+
+  # ============================================================================
+  # Semantic Release
+  # ============================================================================
+  semantic-release:
+    name: Semantic Release
+    runs-on: ubuntu-latest
+    needs: [examples-validate, terratest]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 'lts/*'
+
+      - name: Semantic Release
+        uses: cycjimmy/semantic-release-action@v6
+        with:
+          extra_plugins: |
+            @semantic-release/changelog@6.0.3
+            @semantic-release/git@10.0.1
+            conventional-changelog-conventionalcommits@9.1.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
