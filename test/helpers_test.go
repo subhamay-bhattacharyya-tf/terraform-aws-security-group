@@ -8,19 +8,12 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/stretchr/testify/require"
 )
 
-type S3BucketProps struct {
-	Name              string
-	VersioningEnabled bool
-	SSEAlgorithm      string
-	KMSKeyID          string
-}
-
-func getS3Client(t *testing.T) *s3.Client {
+func getEC2Client(t *testing.T) *ec2.Client {
 	t.Helper()
 
 	region := os.Getenv("AWS_REGION")
@@ -31,63 +24,44 @@ func getS3Client(t *testing.T) *s3.Client {
 	cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(region))
 	require.NoError(t, err, "Failed to load AWS config")
 
-	return s3.NewFromConfig(cfg)
+	return ec2.NewFromConfig(cfg)
 }
 
-func bucketExists(t *testing.T, client *s3.Client, bucketName string) bool {
+func describeSecurityGroup(t *testing.T, client *ec2.Client, groupID string) *types.SecurityGroup {
 	t.Helper()
 
-	_, err := client.HeadBucket(context.TODO(), &s3.HeadBucketInput{
-		Bucket: &bucketName,
+	out, err := client.DescribeSecurityGroups(context.TODO(), &ec2.DescribeSecurityGroupsInput{
+		GroupIds: []string{groupID},
 	})
-
-	return err == nil
+	require.NoError(t, err, "DescribeSecurityGroups failed for %s", groupID)
+	require.Len(t, out.SecurityGroups, 1, "Expected exactly one security group for %s", groupID)
+	return &out.SecurityGroups[0]
 }
 
-func fetchBucketProps(t *testing.T, client *s3.Client, bucketName string) S3BucketProps {
+func describeIngressRule(t *testing.T, client *ec2.Client, ruleID string) *types.SecurityGroupRule {
+	t.Helper()
+	return describeRule(t, client, ruleID, false)
+}
+
+func describeEgressRule(t *testing.T, client *ec2.Client, ruleID string) *types.SecurityGroupRule {
+	t.Helper()
+	return describeRule(t, client, ruleID, true)
+}
+
+func describeRule(t *testing.T, client *ec2.Client, ruleID string, expectEgress bool) *types.SecurityGroupRule {
 	t.Helper()
 
-	props := S3BucketProps{Name: bucketName}
-
-	// Check versioning
-	versioningOutput, err := client.GetBucketVersioning(context.TODO(), &s3.GetBucketVersioningInput{
-		Bucket: &bucketName,
+	out, err := client.DescribeSecurityGroupRules(context.TODO(), &ec2.DescribeSecurityGroupRulesInput{
+		SecurityGroupRuleIds: []string{ruleID},
 	})
-	require.NoError(t, err, "Failed to get bucket versioning")
-	props.VersioningEnabled = versioningOutput.Status == types.BucketVersioningStatusEnabled
+	require.NoError(t, err, "DescribeSecurityGroupRules failed for %s", ruleID)
+	require.Len(t, out.SecurityGroupRules, 1, "Expected exactly one rule for %s", ruleID)
 
-	// Check encryption
-	encryptionOutput, err := client.GetBucketEncryption(context.TODO(), &s3.GetBucketEncryptionInput{
-		Bucket: &bucketName,
-	})
-	if err == nil && len(encryptionOutput.ServerSideEncryptionConfiguration.Rules) > 0 {
-		rule := encryptionOutput.ServerSideEncryptionConfiguration.Rules[0]
-		if rule.ApplyServerSideEncryptionByDefault != nil {
-			props.SSEAlgorithm = string(rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm)
-			if rule.ApplyServerSideEncryptionByDefault.KMSMasterKeyID != nil {
-				props.KMSKeyID = *rule.ApplyServerSideEncryptionByDefault.KMSMasterKeyID
-			}
-		}
+	rule := out.SecurityGroupRules[0]
+	if rule.IsEgress != nil {
+		require.Equal(t, expectEgress, *rule.IsEgress, "rule %s direction mismatch", ruleID)
 	}
-
-	return props
-}
-
-func listBucketObjects(t *testing.T, client *s3.Client, bucketName string) []string {
-	t.Helper()
-
-	output, err := client.ListObjectsV2(context.TODO(), &s3.ListObjectsV2Input{
-		Bucket: &bucketName,
-	})
-	require.NoError(t, err, "Failed to list bucket objects")
-
-	var keys []string
-	for _, obj := range output.Contents {
-		if obj.Key != nil {
-			keys = append(keys, *obj.Key)
-		}
-	}
-	return keys
+	return &rule
 }
 
 func mustEnv(t *testing.T, key string) string {
@@ -97,6 +71,3 @@ func mustEnv(t *testing.T, key string) string {
 	return v
 }
 
-func stringPtr(s string) *string {
-	return &s
-}

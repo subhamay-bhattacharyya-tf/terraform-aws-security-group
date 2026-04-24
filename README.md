@@ -1,424 +1,326 @@
-# Terraform AWS S3 Bucket Module
+# Terraform AWS Security Group Module
 
-![Release](https://github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/actions/workflows/ci.yaml/badge.svg)&nbsp;![AWS](https://img.shields.io/badge/AWS-232F3E?logo=amazonaws&logoColor=white)&nbsp;![Commit Activity](https://img.shields.io/github/commit-activity/t/subhamay-bhattacharyya-tf/terraform-aws-s3)&nbsp;![Last Commit](https://img.shields.io/github/last-commit/subhamay-bhattacharyya-tf/terraform-aws-s3)&nbsp;![Release Date](https://img.shields.io/github/release-date/subhamay-bhattacharyya-tf/terraform-aws-s3)&nbsp;![Repo Size](https://img.shields.io/github/repo-size/subhamay-bhattacharyya-tf/terraform-aws-s3)&nbsp;![File Count](https://img.shields.io/github/directory-file-count/subhamay-bhattacharyya-tf/terraform-aws-s3)&nbsp;![Issues](https://img.shields.io/github/issues/subhamay-bhattacharyya-tf/terraform-aws-s3)&nbsp;![Top Language](https://img.shields.io/github/languages/top/subhamay-bhattacharyya-tf/terraform-aws-s3)&nbsp;![Custom Endpoint](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/bsubhamay/dd8a07e256e7af69c3de7f120a895d97/raw/terraform-aws-s3.json?)
+![Release](https://github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group/actions/workflows/ci.yaml/badge.svg)&nbsp;![AWS](https://img.shields.io/badge/AWS-232F3E?logo=amazonaws&logoColor=white)&nbsp;![Commit Activity](https://img.shields.io/github/commit-activity/t/subhamay-bhattacharyya-tf/terraform-aws-security-group)&nbsp;![Last Commit](https://img.shields.io/github/last-commit/subhamay-bhattacharyya-tf/terraform-aws-security-group)&nbsp;![Release Date](https://img.shields.io/github/release-date/subhamay-bhattacharyya-tf/terraform-aws-security-group)&nbsp;![Repo Size](https://img.shields.io/github/repo-size/subhamay-bhattacharyya-tf/terraform-aws-security-group)&nbsp;![File Count](https://img.shields.io/github/directory-file-count/subhamay-bhattacharyya-tf/terraform-aws-security-group)&nbsp;![Issues](https://img.shields.io/github/issues/subhamay-bhattacharyya-tf/terraform-aws-security-group)&nbsp;![Top Language](https://img.shields.io/github/languages/top/subhamay-bhattacharyya-tf/terraform-aws-security-group)&nbsp;![Custom Endpoint](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/bsubhamay/0904642f67938ca90257d8bf2a78ea13/raw/terraform-aws-security-group.json?)
 
-A Terraform module for creating and managing AWS S3 buckets with optional encryption (SSE-S3 or SSE-KMS), versioning, folder structure, bucket policy, and event notifications.
+A Terraform module for creating and managing AWS security groups and their ingress/egress rules as two independent submodules. The split-module design avoids circular dependencies between cross-referencing security groups and prevents drift caused by inline rule blocks on `aws_security_group`.
 
 ## Features
 
-- JSON-style configuration input
-- Server-side encryption with SSE-S3 (AES256) or SSE-KMS
-- Configurable versioning
-- Automatic folder/prefix creation
-- Public access blocked by default
-- Optional bucket policy
-- Event notifications for SQS, SNS, and Lambda
-- Built-in input validation
+- Split-module design — security groups and rules are independent resources
+- Single `map(object({...}))` input per submodule, consumed via `for_each`
+- No inline `ingress`/`egress` blocks — all rules via `aws_vpc_security_group_ingress_rule` / `aws_vpc_security_group_egress_rule`
+- Cross-references between security groups (e.g. ALB → app tier) without circular dependency
+- Supports all rule source types: `cidr_ipv4`, `cidr_ipv6`, `referenced_security_group_id`, `prefix_list_id`
+- Built-in input validation (name length, `vpc_id` format, port ranges, protocol, mutual exclusivity of rule sources)
+- `create_before_destroy` lifecycle on every security group
 
 ## Modules
 
-| Module | Description |
-|--------|-------------|
-| [bucket](modules/bucket) | S3 bucket with encryption, versioning, and folders |
-| [event-notification](modules/event-notification) | S3 event notifications for SQS, SNS, and Lambda |
+| Module                                               | Description                                                                                      |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [security-group](modules/security-group)             | Creates `aws_security_group` resources (no inline rules)                                         |
+| [security-group-rules](modules/security-group-rules) | Creates `aws_vpc_security_group_ingress_rule` and `aws_vpc_security_group_egress_rule` resources |
 
 ## Usage
 
-### Basic S3 Bucket
+### Single security group with rules
 
 ```hcl
-module "s3_bucket" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/bucket?ref=main"
+module "security_groups" {
+  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group/modules/security-group?ref=main"
 
-  s3_config = {
-    bucket_name = "my-bucket"
+  region = "us-east-1"
+
+  security_groups = {
+    web = {
+      name        = "web-sg"
+      description = "Web tier security group"
+      vpc_id      = "vpc-0123456789abcdef0"
+      tags = {
+        Tier = "web"
+      }
+    }
+  }
+}
+
+module "security_group_rules" {
+  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group/modules/security-group-rules?ref=main"
+
+  region = "us-east-1"
+
+  rules = {
+    web_https_ingress = {
+      security_group_id = module.security_groups.security_group_ids["web"]
+      type              = "ingress"
+      from_port         = 443
+      to_port           = 443
+      ip_protocol       = "tcp"
+      cidr_ipv4         = "0.0.0.0/0"
+      description       = "Allow HTTPS from the internet"
+    }
+    web_all_egress = {
+      security_group_id = module.security_groups.security_group_ids["web"]
+      type              = "egress"
+      from_port         = 0
+      to_port           = 0
+      ip_protocol       = "-1"
+      cidr_ipv4         = "0.0.0.0/0"
+      description       = "Allow all egress"
+    }
   }
 }
 ```
 
-### S3 Bucket with Versioning
+### Cross-referenced security groups (ALB → app)
 
 ```hcl
-module "s3_bucket" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/bucket?ref=main"
+module "security_groups" {
+  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group/modules/security-group?ref=main"
 
-  s3_config = {
-    bucket_name = "my-versioned-bucket"
-    versioning  = true
+  region = "us-east-1"
+
+  security_groups = {
+    alb = {
+      name        = "alb-sg"
+      description = "ALB (public-facing) security group"
+      vpc_id      = "vpc-0123456789abcdef0"
+    }
+    app = {
+      name        = "app-sg"
+      description = "Application tier security group"
+      vpc_id      = "vpc-0123456789abcdef0"
+    }
+  }
+}
+
+module "security_group_rules" {
+  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group/modules/security-group-rules?ref=main"
+
+  region = "us-east-1"
+
+  rules = {
+    alb_https_ingress = {
+      security_group_id = module.security_groups.security_group_ids["alb"]
+      type              = "ingress"
+      from_port         = 443
+      to_port           = 443
+      ip_protocol       = "tcp"
+      cidr_ipv4         = "0.0.0.0/0"
+    }
+    alb_to_app_egress = {
+      security_group_id            = module.security_groups.security_group_ids["alb"]
+      type                         = "egress"
+      from_port                    = 8080
+      to_port                      = 8080
+      ip_protocol                  = "tcp"
+      referenced_security_group_id = module.security_groups.security_group_ids["app"]
+    }
+    app_from_alb_ingress = {
+      security_group_id            = module.security_groups.security_group_ids["app"]
+      type                         = "ingress"
+      from_port                    = 8080
+      to_port                      = 8080
+      ip_protocol                  = "tcp"
+      referenced_security_group_id = module.security_groups.security_group_ids["alb"]
+    }
   }
 }
 ```
 
-### S3 Bucket with SSE-S3 Encryption
+### Rule using an IPv6 CIDR
 
 ```hcl
-module "s3_bucket" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/bucket?ref=main"
+module "security_group_rules" {
+  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group/modules/security-group-rules?ref=main"
 
-  s3_config = {
-    bucket_name   = "my-encrypted-bucket"
-    sse_algorithm = "AES256"
+  region = "us-east-1"
+
+  rules = {
+    ipv6_https_ingress = {
+      security_group_id = module.security_groups.security_group_ids["web"]
+      type              = "ingress"
+      from_port         = 443
+      to_port           = 443
+      ip_protocol       = "tcp"
+      cidr_ipv6         = "::/0"
+    }
   }
 }
 ```
 
-### S3 Bucket with SSE-KMS Encryption
+### Rule using a managed prefix list
 
 ```hcl
-module "s3_bucket" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/bucket?ref=main"
+module "security_group_rules" {
+  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group/modules/security-group-rules?ref=main"
 
-  s3_config = {
-    bucket_name   = "my-kms-bucket"
-    sse_algorithm = "aws:kms"
-    kms_key_alias = "my-kms-key"
+  region = "us-east-1"
+
+  rules = {
+    s3_gateway_egress = {
+      security_group_id = module.security_groups.security_group_ids["app"]
+      type              = "egress"
+      from_port         = 443
+      to_port           = 443
+      ip_protocol       = "tcp"
+      prefix_list_id    = "pl-0123456789abcdef0"
+    }
   }
 }
-```
-
-### S3 Bucket with Folders
-
-```hcl
-module "s3_bucket" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/bucket?ref=main"
-
-  s3_config = {
-    bucket_name = "my-data-bucket"
-    bucket_keys = ["raw-data/csv", "raw-data/json", "processed"]
-  }
-}
-```
-
-### S3 Bucket with Bucket Policy
-
-```hcl
-module "s3_bucket" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/bucket?ref=main"
-
-  s3_config = {
-    bucket_name   = "my-policy-bucket"
-    bucket_policy = jsonencode({
-      Version = "2012-10-17"
-      Statement = [
-        {
-          Sid       = "AllowSSLRequestsOnly"
-          Effect    = "Deny"
-          Principal = "*"
-          Action    = "s3:*"
-          Resource = [
-            "arn:aws:s3:::my-policy-bucket",
-            "arn:aws:s3:::my-policy-bucket/*"
-          ]
-          Condition = {
-            Bool = {
-              "aws:SecureTransport" = "false"
-            }
-          }
-        }
-      ]
-    })
-  }
-}
-```
-
-### S3 Event Notification with SQS
-
-```hcl
-module "s3_notification" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/event-notification?ref=main"
-
-  bucket_name = "my-bucket"
-
-  sqs_notifications = [
-    {
-      id            = "snowpipe-notification"
-      queue_arn     = "arn:aws:sqs:us-east-1:123456789012:my-queue"
-      events        = ["s3:ObjectCreated:*"]
-      filter_prefix = "raw-data/"
-      filter_suffix = ".csv"
-    }
-  ]
-}
-```
-
-### S3 Event Notification with SNS
-
-```hcl
-module "s3_notification" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/event-notification?ref=main"
-
-  bucket_name = "my-bucket"
-
-  sns_notifications = [
-    {
-      id            = "upload-notification"
-      topic_arn     = "arn:aws:sns:us-east-1:123456789012:my-topic"
-      events        = ["s3:ObjectCreated:*", "s3:ObjectRemoved:*"]
-      filter_prefix = "uploads/"
-    }
-  ]
-}
-```
-
-### S3 Event Notification with Lambda
-
-```hcl
-module "s3_notification" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/event-notification?ref=main"
-
-  bucket_name = "my-bucket"
-
-  lambda_notifications = [
-    {
-      id                  = "process-uploads"
-      lambda_function_arn = "arn:aws:lambda:us-east-1:123456789012:function:my-function"
-      events              = ["s3:ObjectCreated:*"]
-      filter_suffix       = ".json"
-    }
-  ]
-}
-```
-
-### S3 Event Notification with Multiple Targets
-
-```hcl
-module "s3_notification" {
-  source = "github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/modules/event-notification?ref=main"
-
-  bucket_name = "my-bucket"
-
-  sqs_notifications = [
-    {
-      id        = "queue-notification"
-      queue_arn = "arn:aws:sqs:us-east-1:123456789012:my-queue"
-      events    = ["s3:ObjectCreated:*"]
-    }
-  ]
-
-  sns_notifications = [
-    {
-      id        = "topic-notification"
-      topic_arn = "arn:aws:sns:us-east-1:123456789012:my-topic"
-      events    = ["s3:ObjectRemoved:*"]
-    }
-  ]
-
-  lambda_notifications = [
-    {
-      id                  = "lambda-notification"
-      lambda_function_arn = "arn:aws:lambda:us-east-1:123456789012:function:my-function"
-      events              = ["s3:ObjectCreated:Put"]
-      filter_prefix       = "processed/"
-    }
-  ]
-}
-```
-
-### Using JSON Input
-
-```bash
-terraform apply -var='region=us-east-1' -var='s3={"bucket_name":"my-bucket","bucket_keys":["raw-data/csv","raw-data/json"],"versioning":true,"sse_algorithm":"aws:kms","kms_key_alias":"SB-KMS"}'
 ```
 
 ## Examples
 
-### Bucket Examples
-
-| Example | Description |
-|---------|-------------|
-| [basic](examples/bucket/basic) | Simple S3 bucket |
-| [versioning](examples/bucket/versioning) | S3 bucket with versioning enabled |
-| [sse-s3](examples/bucket/sse-s3) | S3 bucket with SSE-S3 encryption |
-| [sse-kms](examples/bucket/sse-kms) | S3 bucket with SSE-KMS encryption |
-| [folders](examples/bucket/folders) | S3 bucket with folder structure |
-
-### Event Notification Examples
-
-| Example | Description |
-|---------|-------------|
-| [sqs](examples/event-notification/sqs) | S3 event notification to SQS |
-| [sns](examples/event-notification/sns) | S3 event notification to SNS |
-| [lambda](examples/event-notification/lambda) | S3 event notification to Lambda |
+| Example                                       | Description                                                                                                |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| [basic](examples/basic)                       | Single security group with HTTPS/HTTP ingress and all-egress via `cidr_ipv4`                               |
+| [cross-referenced](examples/cross-referenced) | Two security groups (`alb` and `app`) demonstrating SG-to-SG references via `referenced_security_group_id` |
 
 ## Requirements
 
-| Name | Version |
-|------|---------|
-| terraform | >= 1.3.0 |
-| aws | >= 5.0.0 |
+| Name      | Version   |
+| --------- | --------- |
+| terraform | >= 1.3.0  |
+| aws       | >= 5.0.0  |
 
 ## Providers
 
-| Name | Version |
-|------|---------|
-| aws | >= 5.0.0 |
+| Name   | Version   |
+| ------ | --------- |
+| aws    | >= 5.0.0  |
 
-## Inputs
+## `security-group` submodule
 
-| Name | Description | Type | Default | Required |
-|------|-------------|------|---------|----------|
-| s3_config | Configuration object for S3 bucket | `object` | - | yes |
+### `security-group` inputs
 
-### s3_config Object Properties
+| Name            | Description                                          | Type        | Default   | Required   |
+| --------------- | ---------------------------------------------------- | ----------- | --------- | ---------- |
+| region          | AWS region where the security groups will be created | string      | -         | yes        |
+| security_groups | Map of security groups to create                     | map(object) | -         | yes        |
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| bucket_name | string | - | Name of the S3 bucket (required) |
-| bucket_keys | list(string) | [] | List of folder prefixes to create |
-| versioning | bool | false | Enable versioning on the bucket |
-| sse_algorithm | string | null | Encryption algorithm: `AES256` (SSE-S3) or `aws:kms` (SSE-KMS) |
-| kms_key_alias | string | null | KMS key alias (required when sse_algorithm is `aws:kms`) |
-| bucket_policy | string | null | JSON bucket policy document |
+#### `security_groups` object properties
 
-## Outputs
+| Property    | Type        | Default                  | Description                                        |
+| ----------- | ----------- | ------------------------ | -------------------------------------------------- |
+| name        | string      | -                        | AWS resource name of the security group (required) |
+| description | string      | `"Managed by Terraform"` | Security group description                         |
+| vpc_id      | string      | -                        | VPC ID (must match `^vpc-[a-f0-9]+$`, required)    |
+| tags        | map(string) | `{}`                     | Tags applied to the security group                 |
 
-| Name | Description |
-|------|-------------|
-| bucket_id | The name of the bucket |
-| bucket_arn | The ARN of the bucket |
-| bucket_domain_name | The bucket domain name |
-| versioning_enabled | Whether versioning is enabled |
-| bucket_keys | The bucket keys created in the bucket |
-| bucket_region | The AWS region where the bucket is located |
+### `security-group` outputs
 
-## Event Notification Module
+| Name                   | Description                                 |
+| ---------------------- | ------------------------------------------- |
+| security_group_ids     | Map of logical keys to security group IDs   |
+| security_group_arns    | Map of logical keys to security group ARNs  |
+| security_group_names   | Map of logical keys to security group names |
+| security_group_vpc_ids | Map of logical keys to VPC IDs              |
 
-### Inputs
+## `security-group-rules` submodule
 
-| Name | Description | Type | Default | Required |
-|------|-------------|------|---------|----------|
-| enabled | Whether to create the S3 event notification | bool | true | no |
-| bucket_name | Name of the S3 bucket to configure notifications for | string | - | yes |
-| sqs_notifications | List of SQS queue notification configurations | list(object) | [] | no |
-| sns_notifications | List of SNS topic notification configurations | list(object) | [] | no |
-| lambda_notifications | List of Lambda function notification configurations | list(object) | [] | no |
+### `security-group-rules` inputs
 
-### SQS Notification Object Properties
+| Name   | Description                                | Type        | Default   | Required   |
+| ------ | ------------------------------------------ | ----------- | --------- | ---------- |
+| region | AWS region where the rules will be created | string      | -         | yes        |
+| rules  | Map of ingress/egress rules to create      | map(object) | -         | yes        |
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| id | string | - | Unique identifier for the notification |
-| queue_arn | string | - | ARN of the SQS queue |
-| events | list(string) | ["s3:ObjectCreated:*"] | S3 events to trigger notification |
-| filter_prefix | string | null | Object key prefix filter |
-| filter_suffix | string | null | Object key suffix filter |
+#### `rules` object properties
 
-### SNS Notification Object Properties
+| Property                     | Type        | Default                  | Description                                            |
+| ---------------------------- | ----------- | ------------------------ | ------------------------------------------------------ |
+| security_group_id            | string      | -                        | ID of the target security group (required)             |
+| type                         | string      | -                        | `"ingress"` or `"egress"` (required)                   |
+| from_port                    | number      | -                        | Start of the port range, 0–65535 (required)            |
+| to_port                      | number      | -                        | End of the port range, 0–65535 (required)              |
+| ip_protocol                  | string      | -                        | One of `tcp`, `udp`, `icmp`, `icmpv6`, `-1` (required) |
+| cidr_ipv4                    | string      | `null`                   | IPv4 CIDR source/destination                           |
+| cidr_ipv6                    | string      | `null`                   | IPv6 CIDR source/destination                           |
+| referenced_security_group_id | string      | `null`                   | Source/destination security group ID                   |
+| prefix_list_id               | string      | `null`                   | Managed prefix list ID                                 |
+| description                  | string      | `"Managed by Terraform"` | Rule description                                       |
+| tags                         | map(string) | `{}`                     | Tags applied to the rule                               |
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| id | string | - | Unique identifier for the notification |
-| topic_arn | string | - | ARN of the SNS topic |
-| events | list(string) | ["s3:ObjectCreated:*"] | S3 events to trigger notification |
-| filter_prefix | string | null | Object key prefix filter |
-| filter_suffix | string | null | Object key suffix filter |
+Exactly one of `cidr_ipv4`, `cidr_ipv6`, `referenced_security_group_id`, or `prefix_list_id` must be set per rule.
 
-### Lambda Notification Object Properties
+### `security-group-rules` outputs
 
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| id | string | - | Unique identifier for the notification |
-| lambda_function_arn | string | - | ARN of the Lambda function |
-| events | list(string) | ["s3:ObjectCreated:*"] | S3 events to trigger notification |
-| filter_prefix | string | null | Object key prefix filter |
-| filter_suffix | string | null | Object key suffix filter |
-
-### Event Notification Outputs
-
-| Name | Description |
-|------|-------------|
-| notification_configured | Whether S3 event notifications were configured |
-| bucket_name | The S3 bucket name with notifications configured |
-| sqs_notification_count | Number of SQS notification configurations |
-| sns_notification_count | Number of SNS notification configurations |
-| lambda_notification_count | Number of Lambda notification configurations |
+| Name              | Description                              |
+| ----------------- | ---------------------------------------- |
+| ingress_rule_ids  | Map of logical keys to ingress rule IDs  |
+| ingress_rule_arns | Map of logical keys to ingress rule ARNs |
+| egress_rule_ids   | Map of logical keys to egress rule IDs   |
+| egress_rule_arns  | Map of logical keys to egress rule ARNs  |
 
 ## Resources Created
 
-### Bucket Module
+### `security-group` resources
 
-| Resource | Description |
-|----------|-------------|
-| aws_s3_bucket | The S3 bucket |
-| aws_s3_bucket_versioning | Versioning configuration |
-| aws_s3_bucket_public_access_block | Blocks all public access |
-| aws_s3_bucket_server_side_encryption_configuration | Encryption configuration (conditional) |
-| aws_s3_bucket_policy | Bucket policy (conditional) |
-| aws_s3_object | Folder placeholders (conditional) |
+| Resource           | Description                                         |
+| ------------------ | --------------------------------------------------- |
+| aws_security_group | Security group (one per map entry, no inline rules) |
 
-### Event Notification Module
+### `security-group-rules` resources
 
-| Resource | Description |
-|----------|-------------|
-| aws_s3_bucket_notification | S3 event notification configuration |
+| Resource                            | Description                                              |
+| ----------------------------------- | -------------------------------------------------------- |
+| aws_vpc_security_group_ingress_rule | One ingress rule per map entry where `type == "ingress"` |
+| aws_vpc_security_group_egress_rule  | One egress rule per map entry where `type == "egress"`   |
 
 ## Validation
 
-The module validates inputs and provides descriptive error messages for:
+All validation lives in each submodule's `variables.tf`:
 
-- Empty bucket name
-- Bucket name exceeding 63 characters
-- Invalid sse_algorithm value
-- Missing kms_key_alias when using SSE-KMS
+- `security_groups[*].name` is non-empty and at most 255 characters
+- `security_groups[*].vpc_id` matches `^vpc-[a-f0-9]+$`
+- `rules[*].type` is one of `ingress`, `egress`
+- `rules[*].ip_protocol` is one of `tcp`, `udp`, `icmp`, `icmpv6`, `-1`
+- `rules[*].from_port` and `rules[*].to_port` are in `[0, 65535]`
+- Exactly one of `cidr_ipv4`, `cidr_ipv6`, `referenced_security_group_id`, `prefix_list_id` is non-null per rule
 
 ## Testing
 
-The module includes Terratest-based integration tests:
+The module includes a Terratest-based integration test that creates real security groups and rules, asserts the outputs, then destroys them:
 
 ```bash
 cd test
 go mod tidy
-go test -v -timeout 30m
+go test -v -timeout 30m -run TestSecurityGroupBasic ./security_group_basic_test.go ./helpers_test.go
 ```
 
-### Test Cases
-
-| Test | Description |
-|------|-------------|
-| TestS3BucketBasic | Basic bucket creation |
-| TestS3BucketVersioning | Bucket with versioning |
-| TestS3BucketSSES3 | Bucket with SSE-S3 encryption |
-| TestS3BucketSSEKMS | Bucket with SSE-KMS encryption |
-| TestS3BucketWithFolders | Bucket with folder structure |
-
-AWS credentials must be configured via environment variables or AWS CLI profile.
+AWS credentials must be configured via environment variables, AWS CLI profile, or (in CI) OIDC. `AWS_REGION` and `AWS_VPC_ID` are required.
 
 ## CI/CD Configuration
 
-The CI workflow runs on:
-- Push to `main`, `feature/**`, and `bug/**` branches (when `modules/**` changes)
-- Pull requests to `main` (when `modules/**` changes)
+The CI workflow (`.github/workflows/ci.yaml`) runs on:
+
+- Push to `main`, `feature/**`, and `bug/**` branches (when `modules/**`, `examples/**`, or `test/**` change)
+- Pull requests to `main` (same path filter)
 - Manual workflow dispatch
 
-The workflow includes:
-- Terraform validation and format checking
-- Examples validation
-- Terratest integration tests
-- Changelog generation (non-main branches)
-- Semantic release (main branch only)
+Jobs:
+
+1. **terraform-validate** — `fmt -check`, `init`, `validate` on both submodules
+2. **examples-validate** — `init` + `validate` on all `examples/*`
+3. **security-group-terratest** — real AWS integration test via OIDC
+4. **generate-changelog** — runs `git-cliff` on non-main branches
+5. **semantic-release** — runs only on `main`; uses Conventional Commits to auto-version
 
 ### GitHub Secrets
 
-| Secret | Description |
-|--------|-------------|
+| Secret         | Description                          |
+| -------------- | ------------------------------------ |
 | `AWS_ROLE_ARN` | IAM role ARN for OIDC authentication |
 
 ### GitHub Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TERRAFORM_VERSION` | Terraform version for CI jobs | `1.3.0` |
-| `GO_VERSION` | Go version for Terratest | `1.21` |
+| Variable            | Description                                           | Default   |
+| ------------------- | ----------------------------------------------------- | --------- |
+| `AWS_REGION`        | AWS region for Terratest                              | -         |
+| `AWS_VPC_ID`        | VPC ID used by Terratest to provision security groups | -         |
+| `TERRAFORM_VERSION` | Terraform version for CI jobs                         | `1.3.0`   |
+| `GO_VERSION`        | Go version for Terratest                              | `1.21`    |
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) for details.
-
-## Breaking Changes
-
-### v2.0.0
-
-- **Module path changed**: The bucket module path changed from `modules/aws-s3-bucket` to `modules/bucket`. Update your source references accordingly.
-- **Output renamed**: `versioning_enabled` output renamed to `versioning_status`.
-- **Examples restructured**: Examples moved from `examples/<name>` to `examples/bucket/<name>` and `examples/event-notification/<name>`.
-- **New event-notification module**: Added separate module for S3 event notifications supporting SQS, SNS, and Lambda.
+MIT License — see [LICENSE](LICENSE) for details.

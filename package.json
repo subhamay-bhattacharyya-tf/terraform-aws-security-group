@@ -1,7 +1,7 @@
 {
-    "name": "terraform-aws-s3",
+    "name": "terraform-aws-security-group",
     "version": "0.0.0",
-    "description": "Terraform module for creating and managing Snowflake warehouses with Semantic Release support.",
+    "description": "Terraform module for creating and managing AWS security groups and their ingress/egress rules as two independent submodules, with Semantic Release support.",
     "license": "MIT",
     "scripts": {
         "release": "semantic-release"
@@ -20,16 +20,18 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/subhamay-bhattacharyya-tf/terraform-aws-s3.git"
+        "url": "git+https://github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group.git"
     },
     "keywords": [
         "terraform",
-        "snowflake",
-        "warehouse",
+        "aws",
+        "security-group",
+        "vpc",
+        "networking",
         "infrastructure-as-code"
     ],
     "bugs": {
-        "url": "https://github.com/subhamay-bhattacharyya-tf/terraform-aws-s3/issues"
+        "url": "https://github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group/issues"
     },
-    "homepage": "https://github.com/subhamay-bhattacharyya-tf/terraform-aws-s3#readme"
+    "homepage": "https://github.com/subhamay-bhattacharyya-tf/terraform-aws-security-group#readme"
 }
