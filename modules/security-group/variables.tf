@@ -1,6 +1,6 @@
 variable "region" {
   type        = string
-  description = "AWS region where the security groups will be created"
+  description = "AWS region where the security groups will be created."
 }
 
 variable "security_groups" {
